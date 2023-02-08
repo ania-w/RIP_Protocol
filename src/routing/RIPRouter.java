@@ -4,30 +4,27 @@ import core.Connection;
 import core.DTNHost;
 import core.Settings;
 import core.Message;
-import routing.util.RoutingInfo;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+
+import java.util.*;
 
 public class RIPRouter extends ActiveRouter{
 
-    public static Integer MAX_HOP_COUNT = 15;
-
-    public static final String RIP_ROUTER_NS = "RipRouter";
-
-    private Map<DTNHost, Integer> routingTable = new HashMap<>();
-    private List<DTNHost> neighbors = new ArrayList<>();
+    public static final int MAX_HOP_COUNT = 15;
+    private Map<DTNHost, Integer> routingTable;
+    private List<DTNHost> neighbors;
 
     public RIPRouter(Settings s) {
         super(s);
+        routingTable = new HashMap<>();
+        neighbors = new ArrayList<>();
     }
 
 
     protected RIPRouter(RIPRouter r) {
         super(r);
+        this.routingTable = new HashMap<>(r.routingTable);
+        this.neighbors = new ArrayList<>(r.neighbors);
     }
 
 
@@ -39,36 +36,49 @@ public class RIPRouter extends ActiveRouter{
             return; // nothing to transfer or is currently transferring
         }
 
-        // Try to send all first-hop unattached messages to all neighbors
-        List<Message> messages = getMessagesWithNextHop(getHost());
-        for (Message m : messages) {
-            for (Connection con : getHost().getConnections()) {
-                DTNHost neighbor = con.getOtherNode(getHost());
+        updateRoutingTable();
 
-                // Don't send the message to the original destination or previous hop
-                if (neighbor.equals(m.getTo()) || neighbor.equals(m.getFrom())) {
-                    continue;
+        List<Message> messages = new ArrayList<>(getMessageCollection());
+
+        for (Message m : messages) {
+            DTNHost destination = m.getTo();
+            Integer hopCount = routingTable.get(destination);
+            for(Connection conn : destination.getConnections()) {
+                if (hopCount != null && hopCount <= MAX_HOP_COUNT) {
+                    // deliver the message
+                    boolean success = startTransfer(m, conn) == RCV_OK;
+                    if (success) {
+                        transferDone(destination.getConnections().get(0));
+                    }
                 }
-                // Use the basic forwarding algorithm from ActiveRouter
-                if (startTransfer(m, con) == RCV_OK) {
-                    break;
+            }
+        }
+
+    }
+
+    private void updateRoutingTable() {
+        for (Connection conn : this.getHost().getConnections()) {
+            DTNHost host = conn.getOtherNode(getHost());
+            if (!this.routingTable.containsKey(host)) {
+                this.routingTable.put(host, 1);
+            } else {
+                int hopCount = this.routingTable.get(host);
+                if (hopCount < MAX_HOP_COUNT) {
+                    this.routingTable.put(host, hopCount + 1);
                 }
             }
         }
     }
 
-    private List<Message> getMessagesWithNextHop(DTNHost host) {
-        List<Message> messages = new ArrayList<>(host.getMessageCollection());
-        List<Message> relevantMessages = new ArrayList<Message>();
 
-        for (Message m : messages) {
-            if (m.getTo().equals(host)) {
-                relevantMessages.add(m);
-            }
-        }
-
-        return relevantMessages;
+    public List<DTNHost> getNeighbors() {
+        return neighbors;
     }
+
+    public Map<DTNHost, Integer> getRoutingTable() {
+        return routingTable;
+    }
+
 
 
     @Override
